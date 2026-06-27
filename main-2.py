@@ -1,5 +1,5 @@
 # main-2.py
-# 简化版：使用少量图片快速演示异常检测
+# 简化版：使用 sample_data 文件夹中的4张图片快速演示异常检测
 # 适合快速验证、演示、调试
 
 import os
@@ -104,86 +104,45 @@ def extract_features(backbone, dataloader, layers=['layer2', 'layer3']):
 
 
 # ============================================================
-# 5. 创建样本数据（4张图片）
+# 5. 检查 sample_data 是否存在
 # ============================================================
-print("\n📁 创建样本数据...")
-
-# 创建临时目录
 sample_dir = Path("./sample_data")
-sample_dir.mkdir(exist_ok=True)
+train_dir = sample_dir / "train" / "good"
+test_dir = sample_dir / "test"
 
-# 从完整数据集中挑选图片
-import shutil
-
-# 训练集：使用原数据集中的良品图片（至少需要一些）
-train_good_dir = Path("./datasets/MVTecAD/bottle/train/good")
-if not train_good_dir.exists():
-    print("❌ 未找到完整数据集，请先确保 datasets 目录存在")
-    print("   路径: ./datasets/MVTecAD/bottle/train/good")
+if not train_dir.exists():
+    print(f"❌ 错误: 找不到训练数据目录 {train_dir}")
+    print("   请确保 sample_data/train/good 目录存在")
     exit(1)
 
-# 创建良品训练目录
-sample_train_dir = sample_dir / "train" / "good"
-sample_train_dir.mkdir(parents=True, exist_ok=True)
+if not test_dir.exists():
+    print(f"❌ 错误: 找不到测试数据目录 {test_dir}")
+    print("   请确保 sample_data/test 目录存在")
+    exit(1)
 
-# 复制前10张良品图片作为训练集
-train_images = sorted(train_good_dir.glob("*.png"))[:10]
-for img in train_images:
-    shutil.copy(img, sample_train_dir / img.name)
-print(f"  训练集: {len(train_images)} 张良品图片")
-
-# 创建测试目录（包含良品和缺陷各2张）
-sample_test_dir = sample_dir / "test"
-sample_test_dir.mkdir(exist_ok=True)
-
-# 从原测试集中复制图片
-test_good_dir = Path("./datasets/MVTecAD/bottle/test/good")
-test_defect_dir = Path("./datasets/MVTecAD/bottle/test/broken_large")
-
-if test_good_dir.exists() and test_defect_dir.exists():
-    # 复制2张良品
-    good_images = sorted(test_good_dir.glob("*.png"))[:2]
-    for img in good_images:
-        shutil.copy(img, sample_test_dir / f"good_{img.name}")
-
-    # 复制2张缺陷
-    defect_images = sorted(test_defect_dir.glob("*.png"))[:2]
-    for img in defect_images:
-        shutil.copy(img, sample_test_dir / f"defect_{img.name}")
-
-    print(f"  测试集: {len(good_images)} 张良品 + {len(defect_images)} 张缺陷")
-else:
-    # 如果原数据集不存在，生成4张随机图作为演示
-    print("⚠️  原数据集不完整，生成4张随机图作为演示...")
-    import numpy as np
-
-    for i in range(4):
-        img = np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8)
-        label = "good" if i < 2 else "defect"
-        Image.fromarray(img).save(sample_test_dir / f"{label}_{i}.png")
-    print("  已生成4张随机图片")
 
 # ============================================================
 # 6. 加载训练数据
 # ============================================================
 print("\n📊 加载训练数据...")
 train_dataset = ImageFolderDataset(
-    root=sample_train_dir,
+    root=train_dir,
     transform=transform
 )
 train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=0)
 
 print(f"  训练集大小: {len(train_dataset)} 张图片")
 
+
 # ============================================================
 # 7. 加载预训练模型
 # ============================================================
 print("\n🧠 加载预训练模型...")
 import timm
-
 backbone = timm.create_model('wide_resnet50_2', pretrained=True, features_only=True)
 backbone.eval()
 print("  模型加载完成！")
+
 
 # ============================================================
 # 8. 提取训练特征
@@ -194,6 +153,7 @@ train_features = extract_features(backbone, train_loader)
 print(f"  layer2: {train_features['layer2'].shape}")
 print(f"  layer3: {train_features['layer3'].shape}")
 
+
 # ============================================================
 # 9. 核心集采样
 # ============================================================
@@ -202,6 +162,7 @@ for layer in train_features:
     original_len = len(train_features[layer])
     train_features[layer] = coreset_sampling(train_features[layer], ratio=0.5)
     print(f"  {layer}: {original_len} → {len(train_features[layer])}")
+
 
 # ============================================================
 # 10. 构建特征库
@@ -212,16 +173,18 @@ feature_bank = {
     'layer3': train_features['layer3']
 }
 
+
 # ============================================================
-# 11. 加载测试数据（4张图片）
+# 11. 加载测试数据
 # ============================================================
 print("\n🧪 加载测试数据...")
 test_dataset = ImageFolderDataset(
-    root=sample_test_dir,
+    root=test_dir,
     transform=transform
 )
 test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
 print(f"  测试集大小: {len(test_dataset)} 张图片")
+
 
 # ============================================================
 # 12. 推理
@@ -255,6 +218,7 @@ with torch.no_grad():
         anomaly_scores.append(anomaly_score)
         image_names.append(Path(paths[0]).name)
 
+
 # ============================================================
 # 13. 显示结果
 # ============================================================
@@ -266,7 +230,7 @@ for i, (name, score) in enumerate(zip(image_names, anomaly_scores)):
     # 根据文件名判断真实标签
     is_good = "good" in name.lower()
     label = "✅ 良品" if is_good else "❌ 缺陷"
-    print(f"  {i + 1}. {name}")
+    print(f"  {i+1}. {name}")
     print(f"     标签: {label}")
     print(f"     异常分数: {score:.4f}")
     print()
